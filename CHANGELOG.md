@@ -9,6 +9,7 @@ Versions: [SemVer](https://semver.org/).
 - AsahiLocker is vendored in `vendor/AsahiLocker` (upstream `93351ce` plus
   the RAM-rescue patch, kept in `vendor/patches/`). No separate checkout is
   needed; `ASAHILOCKER_DIR` still overrides it.
+- MIT license.
 
 ### Changed
 - Moved into its own repository. The README now explains how to point

@@ -126,5 +126,5 @@ Kept here in case the deploy dies after encryption again.
 
 ## License
 
-The scripts in this repo have no license yet. AsahiLocker in
-`vendor/AsahiLocker` is MIT; see its `LICENSE`.
+MIT, see [`LICENSE`](LICENSE). AsahiLocker in `vendor/AsahiLocker` is also
+MIT, © William MacKinnon; see its own `LICENSE`.
