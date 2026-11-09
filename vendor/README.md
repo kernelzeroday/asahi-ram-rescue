@@ -6,7 +6,7 @@
 | | |
 |---|---|
 | Upstream commit | `93351ce93500d34fc79e79ed4c6ccba17da87fa7` (docs: Step 3 recovery downloads AsahiLocker onto the stick (#3)) |
-| Patch | `patches/0001-luks-deploy-run-cleanly-from-a-RAM-only-dracut-rescue.patch` |
+| Patch | `patches/0001-luks-deploy-run-cleanly-from-a-RAM-only-dracut-rescue.patch`, proposed upstream in [doug445/AsahiLocker#5](https://github.com/doug445/AsahiLocker/pull/5) |
 | Removed | `.github/` (upstream CI and rulesets; they do nothing in a subdirectory) |
 
 The patch changes only `bin/luks-deploy.sh`, so it runs from a dracut RAM
@@ -30,4 +30,5 @@ git -C /tmp/al archive --prefix=AsahiLocker/ HEAD | tar -x -C vendor
 rm -rf vendor/AsahiLocker/.github
 ```
 
-Then update the commit above, and test on a real machine before tagging.
+Once #5 is merged, skip the `git am` step and drop the patch. Then update
+the commit above, and test on a real machine before tagging.
