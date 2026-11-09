@@ -3,7 +3,13 @@
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions: [SemVer](https://semver.org/).
 
-## [Unreleased]: `feature/multi-machine`
+## [Unreleased]
+
+## [0.2.0] - 2026-11-08
+
+Tested: a MacBook Pro 13" M1 (2020) was encrypted in place by a full
+unattended run. luks-deploy.sh passed all 8 steps and its 12-point
+verification gate, then the machine booted encrypted.
 
 ### Changed
 - Partitions, UUIDs, btrfs subvolume and disk are read from the running
