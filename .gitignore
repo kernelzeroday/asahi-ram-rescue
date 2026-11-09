@@ -1,0 +1,7 @@
+# Editor and OS junk
+*~
+*.swp
+.DS_Store
+
+# Logs captured while testing on a Mac
+*.log
