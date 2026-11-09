@@ -48,6 +48,18 @@ grep -q -- '--force-password' "$SRC/bin/luks-deploy.sh" \
     || die "$SRC lacks the RAM-rescue fixes: git -C $SRC checkout fix/ram-rescue-environment"
 [ -f "/boot/vmlinuz-$KVER" ] || die "Missing /boot/vmlinuz-$KVER"
 
+# Every tool luks-deploy.sh runs outside its chroot. dracut prints an error
+# for a missing one but still builds the image, so check here and stop.
+REQ="bash cryptsetup btrfs sgdisk awk sed grep lsblk blkid blockdev findmnt \
+     mktemp chroot mount umount mountpoint tee head tail wc sort cut tr stat \
+     sync basename dirname readlink date cp mv rm mkdir chmod cat touch \
+     printf env sleep uname df find free seq partprobe udevadm \
+     lsmod modprobe rmdir od partx which install lsinitrd"
+MISSING_TOOLS=""
+for t in $REQ; do command -v "$t" >/dev/null 2>&1 || MISSING_TOOLS="$MISSING_TOOLS $t"; done
+[ -z "$MISSING_TOOLS" ] || die "missing on this system:$MISSING_TOOLS
+       Install them first (sgdisk is in the gdisk package): sudo dnf install gdisk"
+
 echo "Detected:"
 echo "  disk   : $DISK  ($(tr -d '\0' < /proc/device-tree/model 2>/dev/null || echo unknown model))"
 echo "  root   : $ROOT_DEV  UUID=$ROOT_UUID  subvol=$ROOT_SUBVOL  (will be encrypted)"
@@ -60,7 +72,8 @@ echo ""
 echo "[0/5] Capturing host diagnostic snapshot to $LOGDIR..."
 mkdir -p "$LOGDIR"
 DISK_NAME="$(basename "$DISK")"
-sgdisk -b "$LOGDIR/$DISK_NAME-gpt-host.bak" "$DISK" 2>/dev/null || true
+sgdisk -b "$LOGDIR/$DISK_NAME-gpt-host.bak" "$DISK" >/dev/null \
+    || die "could not back up the partition table of $DISK"
 lsblk -o NAME,SIZE,FSTYPE,LABEL,UUID,PARTUUID,MOUNTPOINTS "$DISK" > "$LOGDIR/lsblk-host.txt" 2>/dev/null || true
 cat /proc/partitions > "$LOGDIR/partitions-host.txt" 2>/dev/null || true
 dmesg | tail -n 200 > "$LOGDIR/dmesg-host.txt" 2>/dev/null || true
@@ -190,11 +203,6 @@ done
 
 # ─── 2. Build Rescue Image with Dracut ─────────────────────────────────────────
 echo "[2/5] Building rescue initramfs (~30-60s)..."
-REQ="bash cryptsetup btrfs sgdisk awk sed grep lsblk blkid blockdev findmnt \
-     mktemp chroot mount umount mountpoint tee head tail wc sort cut tr stat \
-     sync basename dirname readlink date cp mv rm mkdir chmod cat touch \
-     printf env sleep uname df find free seq partprobe udevadm \
-     lsmod modprobe rmdir od partx which install"
 OPT="lsinitrd file less nano vi dmsetup wipefs e2fsck"
 
 dracut --force --no-hostonly-cmdline \
@@ -214,7 +222,7 @@ LIST="$(lsinitrd "$OUT")"
 FAIL=0
 for f in root/AsahiLocker/bin/luks-deploy.sh start.sh usr/bin/cryptsetup \
          usr/bin/btrfs usr/bin/tee usr/bin/head usr/bin/date usr/bin/basename \
-         usr/bin/sync usr/bin/install usr/bin/lsmod usr/bin/rmdir usr/bin/dracut usr/bin/grub2-mkconfig \
+         usr/bin/sync usr/bin/install usr/bin/sgdisk usr/bin/partprobe usr/bin/lsmod usr/bin/rmdir usr/bin/dracut usr/bin/grub2-mkconfig \
          nvme-apple.ko spi-hid-apple.ko dm-crypt.ko; do
     if grep -qF -- "$f" <<< "$LIST"; then
         echo "  OK   $f"
