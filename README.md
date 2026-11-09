@@ -21,6 +21,7 @@ Tested on 2026-11-08 on Fedora Asahi, kernel
 |---|---|
 | `setup-ram-rescue.sh` | Builds `/boot/initramfs-ram-rescue.img`, checks its contents, writes the GRUB entry to `/etc/grub.d/40_custom` and regenerates `grub.cfg`. Nothing else on disk changes, apart from diagnostic snapshots in `/boot/asahilocker-logs/`. |
 | `clean-grub.sh` | Resets `/etc/grub.d/40_custom` to Fedora's empty template and regenerates `grub.cfg`. This removes the rescue entry. |
+| `vendor/AsahiLocker/` | AsahiLocker, MIT, with the patch in `vendor/patches/` applied. |
 
 ## Before you start
 
@@ -37,16 +38,10 @@ Inside the rescue, `/start.sh` finds the partitions by UUID, not by kernel
 name. The image is tied to the machine it was built on, so don't copy it to
 another Mac.
 
-AsahiLocker is a separate checkout. By default the script looks for it at
-`../AsahiLocker`, next to this repo. Anywhere else, set `ASAHILOCKER_DIR`.
-The checkout needs the RAM-rescue fixes on its `fix/ram-rescue-environment`
-branch. The script checks for those fixes and stops if they're missing.
-
-```
-some-dir/
-├── AsahiLocker/        (checkout with fix/ram-rescue-environment)
-└── asahi-ram-rescue/
-```
+AsahiLocker is vendored in `vendor/AsahiLocker`, with the RAM-rescue patch
+already applied (see [`vendor/README.md`](vendor/README.md)). To use another
+copy, set `ASAHILOCKER_DIR`; the script checks that it has the patch and
+stops if not.
 
 ## Use
 
@@ -57,7 +52,7 @@ sudo grub2-reboot "Fedora Asahi RAM Rescue (In-Place Encryption)"
 sudo reboot
 ```
 
-If AsahiLocker isn't next to this repo, pass its location through `sudo`:
+To use a different AsahiLocker copy, pass its location through `sudo`:
 
 ```bash
 sudo env ASAHILOCKER_DIR=/path/to/AsahiLocker ./setup-ram-rescue.sh
@@ -92,8 +87,8 @@ SYSTEMD_SULOGIN_FORCE=1 rd.shell rd.timeout=60 systemd.show_status=1 console=tty
 
 ## What went wrong along the way
 
-Each problem below stopped a real run. All of them are fixed here or on the
-AsahiLocker branch.
+Each problem below stopped a real run. All of them are fixed here or in the
+vendored AsahiLocker patch.
 
 1. **luks-deploy's tool check wants `dracut` and `grub2-mkconfig`.** It
    only runs them inside `chroot /mnt`. The image ships placeholder scripts
@@ -128,3 +123,8 @@ Kept here in case the deploy dies after encryption again.
   --args=...`): `rd.luks.uuid=<luks-uuid> rd.luks.name=<luks-uuid>=fedora_crypt`
 - `dracut --regenerate-all --force`, `grub2-mkconfig -o /boot/grub2/grub.cfg`,
   `restorecon -Rv /etc /boot`
+
+## License
+
+The scripts in this repo have no license yet. AsahiLocker in
+`vendor/AsahiLocker` is MIT; see its `LICENSE`.

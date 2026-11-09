@@ -1,0 +1,249 @@
+#!/bin/bash
+#
+# AsahiLocker — in-place LUKS2 encryption for Fedora Asahi Remix on Apple Silicon
+# https://github.com/doug445/AsahiLocker
+#
+# Copyright (c) 2026 William MacKinnon <spilled-bowline0j@icloud.com>
+# SPDX-License-Identifier: MIT
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
+# Generate aligned disk-encryption summary for fastfetch.
+# Runs as root (blkid/luksDump/bitlkDump need it); writes a world-readable cache
+# AND prints to stdout so fastfetch can call it live. No key material is exposed
+# — only KDF / cipher metadata.
+CACHE="${LUKS_FETCH_CACHE:-/var/cache/luks-fetch.txt}"
+# fastfetch's `command` module treats its output as a single line, so an embedded
+# newline escapes the logo column and garbles every device after the first.
+# Instead fastfetch calls us once per line ($1 = 1-based line number) and we print
+# only that line; asking for a line that doesn't exist prints nothing, which makes
+# fastfetch skip that module entirely. With no argument the whole block is printed.
+LINE="${1:-}"
+MAXAGE=1800    # seconds — reuse a fresh cache instead of re-dumping every header per line
+LOCK=/run/luks-fetch-cache.lock
+# LUKS UUIDs of volumes that GRUB itself must unlock (as opposed to the initramfs).
+# Such volumes are KDF-constrained by whatever GRUB is installed:
+#   GRUB >= 2.14: argon2i/id/d supported. The usable memory cost is set by the
+#                 FIRMWARE's heap, not by GRUB, and must be measured per
+#                 platform: ~1 GiB on x86 vendor UEFI, 2 GiB measured working
+#                 under U-Boot on an M2 Max. NEVER 4 GiB — a 32-bit overflow in
+#                 GRUB's argon2_init wraps the allocation to zero. See
+#                 docs/BOOT-ENCRYPTION-STATUS.md.
+#   GRUB 2.12 (Fedora 44): no argon2 support at all. Do NOT answer that by
+#                 downgrading a volume to pbkdf2 -- either upgrade GRUB, or keep
+#                 the volume off GRUB's unlock path (what this repo does with /boot).
+# The root volume this repo encrypts is unlocked by the INITRAMFS, not GRUB, so it is
+# unaffected and uses the full 4 GiB argon2id. This list only tags GRUB-unlocked
+# volumes with "(GRUB boot)" in the output. Space-PADDED list; empty by default:
+#   GRUB_UUIDS=" uuid1 uuid2 " /usr/local/bin/luks-fetch-cache
+GRUB_UUIDS="${GRUB_UUIDS:- }"
+
+# ─── Layout, read from the fastfetch config that will display this ──────────
+# fastfetch prints a keyed line as "<key><separator><value>" and a line whose
+# key is a bare space with no prefix at all -- which is how the continuation
+# lines below the first land under its value: the text is padded by the width
+# of that prefix. That width used to be a constant here (17, for
+# "Disk Encryption: ") that had to be kept in step with the config by hand.
+# Now the config is read: the key and any keyWidth of the first module that
+# calls this script, the display separator, and how many line slots there are.
+#
+#   KEYPAD  columns to indent continuation lines: keyWidth if one is set
+#           (module or display.key.width; fastfetch positions the value with a
+#           cursor move), else the visible width of key + separator
+#   SLOTS   how many modules call this script -- how many lines fastfetch will
+#           ask for. With more volumes than slots, the last slot says so.
+#
+# The config is the calling user's: $SUDO_USER's when fastfetch went through
+# sudo, else $HOME's, else the system one. Overrides: LUKS_FETCH_CONFIG=<file>,
+# LUKS_FETCH_KEYPAD=<n>, LUKS_FETCH_SLOTS=<n>. Without a config, or without
+# python3 to read it, the old constants apply: 17 columns, unlimited slots.
+KEYPAD=17; SLOTS=0
+find_config() {
+  [ -n "${LUKS_FETCH_CONFIG:-}" ] && { echo "$LUKS_FETCH_CONFIG"; return; }
+  local home="${HOME:-}" c
+  [ -n "${SUDO_USER:-}" ] && home=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
+  for c in "${XDG_CONFIG_HOME:-$home/.config}/fastfetch/config.jsonc" \
+           "${XDG_CONFIG_HOME:-$home/.config}/fastfetch/config.json" \
+           /etc/fastfetch/config.jsonc /etc/fastfetch/config.json; do
+    [ -r "$c" ] && { echo "$c"; return; }
+  done
+  return 1
+}
+read_layout() {
+  local cfg; cfg=$(find_config) || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  local got
+  got=$(python3 - "$cfg" "luks-fetch-cache" <<'PYEOF' 2>/dev/null
+import json, re, sys
+path, me = sys.argv[1], sys.argv[2]
+src = open(path, encoding="utf-8", errors="replace").read()
+# JSONC -> JSON: drop // and /* */ comments outside strings, then trailing commas.
+out, i, n = [], 0, len(src)
+while i < n:
+    c = src[i]
+    if c == '"':
+        j = i + 1
+        while j < n and src[j] != '"':
+            j += 2 if src[j] == "\\" else 1
+        out.append(src[i:j+1]); i = j + 1
+    elif src.startswith("//", i):
+        i = src.find("\n", i);  i = n if i < 0 else i
+    elif src.startswith("/*", i):
+        i = src.find("*/", i + 2); i = n if i < 0 else i + 2
+    else:
+        out.append(c); i += 1
+text = re.sub(r",(\s*[}\]])", r"\1", "".join(out))
+cfg = json.loads(text)
+disp = cfg.get("display") or {}
+sep = disp.get("separator", ": ")
+gkw = (disp.get("key") or {}).get("width") if isinstance(disp.get("key"), dict) else None
+mods = [m for m in cfg.get("modules", []) if isinstance(m, dict)
+        and m.get("type") == "command" and me in str(m.get("text", ""))]
+if not mods:
+    sys.exit(0)
+first = mods[0]
+key = str(first.get("key", "Command"))
+kw = first.get("keyWidth", gkw)
+pad = int(kw) if isinstance(kw, (int, float)) and kw > 0 else len(key) + len(sep)
+print(pad, len(mods))
+PYEOF
+  )
+  [ -n "$got" ] || return 0
+  KEYPAD=${got%% *}; SLOTS=${got##* }
+}
+read_layout
+[ -n "${LUKS_FETCH_KEYPAD:-}" ] && KEYPAD="$LUKS_FETCH_KEYPAD"
+[ -n "${LUKS_FETCH_SLOTS:-}"  ] && SLOTS="$LUKS_FETCH_SLOTS"
+
+# Lay a block out for the caller: line 1 as is, every later line indented by
+# KEYPAD, and -- when fastfetch has fewer slots than there are volumes -- the
+# last slot carries a count of what it cannot show. Leading whitespace on the
+# stored lines is discarded first, so a cache padded for one user's layout is
+# re-padded for another's rather than doubled up.
+layout() {
+  awk -v pad="$KEYPAD" -v slots="$SLOTS" '
+    { sub(/^[ \t]+/, ""); l[NR] = $0 }
+    END {
+      total = NR
+      shown = (slots > 0 && total > slots) ? slots : total
+      for (i = 1; i <= shown; i++) {
+        line = l[i]
+        if (i == slots && total > slots) line = line "  (+" (total - slots) " more)"
+        printf "%s%s\n", (i > 1 ? sprintf("%*s", pad, "") : ""), line
+      }
+    }'
+}
+# Print either the whole block or just line $LINE of it.
+emit() { if [ -n "$LINE" ]; then printf '%s\n' "$1" | layout | sed -n "${LINE}p"; else printf '%s\n' "$1" | layout; fi; }
+
+fresh_cache() {
+  [ -r "$CACHE" ] || return 1
+  local age; age=$(( $(date +%s) - $(stat -c %Y "$CACHE" 2>/dev/null || echo 0) ))
+  [ "$age" -ge 0 ] && [ "$age" -lt "$MAXAGE" ]
+}
+
+# fastfetch runs its command modules concurrently, so all the per-line calls fire
+# at once and would each do a full blkid/luksDump sweep. Serialize on a lock: the
+# first one in rescans, the rest wake up to a fresh cache and just slice it.
+if [ -n "$LINE" ]; then
+  fresh_cache && { emit "$(cat "$CACHE")"; exit 0; }
+fi
+exec 9>"$LOCK" 2>/dev/null || true
+flock 9 2>/dev/null || true
+if [ -n "$LINE" ]; then
+  fresh_cache && { emit "$(cat "$CACHE")"; exit 0; }
+fi
+
+emit_luks() {
+  local d="$1" uuid note
+  uuid=$(cryptsetup luksUUID "$d" 2>/dev/null)
+  note=""; [[ "$GRUB_UUIDS" == *" $uuid "* ]] && note="  (GRUB boot)"
+  cryptsetup luksDump "$d" 2>/dev/null | awk -v dev="$(basename "$d")" -v note="$note" '
+    /Version:/&&!v{v=$2} /PBKDF:/&&!p{p=$2} /Time cost:/&&!t{t=$3}
+    /Memory:/&&!mm{mm=$2} /Threads:/&&!th{th=$2}
+    /Iterations:/&&!it{it=$2} /AF hash:/&&!h{h=$3}
+    END{
+      if (v == "") exit          # no dump (no root?): no line, not a blank one
+      if(p ~ /argon/) printf "%-10s LUKS%s %s, %.3g GiB, %d threads, t=%s, %s%s", dev,v,p,mm/1048576,th,t,h,note
+      else printf "%-10s LUKS%s %s, %s iters, %s%s", dev,v,p,it,h,note
+    }'
+}
+
+emit_bitlk() {
+  local d="$1"
+  # bitlkDump exposes only public FVE metadata (cipher, size, protector types) — no keys.
+  cryptsetup bitlkDump "$d" 2>/dev/null | awk -v dev="$(basename "$d")" '
+    /^Version:/{v=$2}
+    /^Volume size:/{vb=$3}
+    /^Cipher name:/{cn=$3}
+    /^Cipher mode:/{cm=$3}
+    /^Cipher key:/{ck=$3}
+    /Protection:/{
+      l=$0; sub(/.*protected with /,"",l)
+      if(l ~ /recovery passphrase/)      tag="recovery"
+      else if(l ~ /passphrase/)          tag="passphrase"
+      else if(l ~ /TPM and PIN/)         tag="TPM+PIN"
+      else if(l ~ /TPM/)                 tag="TPM"
+      else if(l ~ /startup key/)         tag="startup-key"
+      else if(l ~ /smart card/)          tag="smartcard"
+      else if(l ~ /clear key/)           tag="CLEAR-KEY"
+      else                               tag=l
+      if(!(tag in seen)){seen[tag]=1; prot=prot (prot?"+":"") tag}
+    }
+    END{
+      if (v == "") exit
+      n=index(cm,"-"); mode=toupper(n?substr(cm,1,n-1):cm)   # xts-plain64 -> XTS
+      printf "%-10s BitLocker v%s %s-%d %s, %.4g GiB, %s", dev,v,toupper(cn),ck/2,mode,vb/1073741824,prot
+    }'
+}
+
+out=""; first=1
+mapfile -t devs < <( { blkid -t TYPE=crypto_LUKS -o device; \
+                       blkid -t TYPE=BitLocker  -o device; } 2>/dev/null | sort )
+for d in "${devs[@]}"; do
+  case "$(blkid -o value -s TYPE "$d" 2>/dev/null)" in
+    crypto_LUKS) line=$(emit_luks  "$d");;
+    BitLocker)   line=$(emit_bitlk "$d");;
+    *)           continue;;
+  esac
+  [ -z "$line" ] && continue
+  # Stored unpadded, one volume per line; layout() indents for whoever reads it.
+  if [ $first -eq 1 ]; then out="$line"; first=0
+  else out="$out"$'\n'"$line"; fi
+done
+if [ -z "$out" ]; then
+  # An empty sweep is not evidence of an unencrypted machine when this ran
+  # unprivileged: luksDump needs root and fastfetch does not have it, and
+  # after a suspend the timer's monotonic clock can leave the cache past
+  # MAXAGE for up to a whole period. The cache on disk was written by root and
+  # is still right; show it rather than announce "no encrypted volumes" on an
+  # encrypted box. Root with genuinely nothing to report still writes that.
+  if [ "$(id -u)" -ne 0 ]; then
+    [ -s "$CACHE" ] && { emit "$(cat "$CACHE")"; exit 0; }
+    emit "(no cache yet -- run once as root, or enable luks-fetch-cache.timer)"; exit 0
+  fi
+  out="(no encrypted volumes detected)"
+fi
+# Written via temp+rename so a concurrent reader never sees a half-written cache.
+if printf '%s\n' "$out" > "$CACHE.tmp" 2>/dev/null; then
+  chmod 644 "$CACHE.tmp" 2>/dev/null || true
+  mv -f "$CACHE.tmp" "$CACHE" 2>/dev/null || rm -f "$CACHE.tmp" 2>/dev/null
+fi
+# Also emit to stdout so fastfetch can call this live (the boot service ignores stdout).
+emit "$out"

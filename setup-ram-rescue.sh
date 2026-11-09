@@ -1,6 +1,6 @@
 #!/bin/bash
 # Builds a RAM-only rescue initramfs on internal /boot containing AsahiLocker,
-# hardened with maximal diagnostic logging and pre-flight state backups.
+# with diagnostic logging and pre-flight state backups.
 # Nothing on disk is partitioned or modified except:
 #   - /boot/initramfs-ram-rescue.img
 #   - /etc/grub.d/40_custom
@@ -13,7 +13,7 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 
 KVER="$(uname -r)"
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
-SRC="${ASAHILOCKER_DIR:-$SCRIPT_DIR/../AsahiLocker}"
+SRC="${ASAHILOCKER_DIR:-$SCRIPT_DIR/vendor/AsahiLocker}"
 STAGING=/tmp/asahi-ram-staging
 OUT=/boot/initramfs-ram-rescue.img
 LOGDIR=/boot/asahilocker-logs
@@ -41,11 +41,11 @@ DISK="/dev/$(lsblk -dno PKNAME "$ROOT_DEV" | head -1)"
 [ -b "$DISK" ] || die "could not find the disk under $ROOT_DEV"
 
 [ -x "$SRC/bin/luks-deploy.sh" ] || die "Missing $SRC/bin/luks-deploy.sh (set ASAHILOCKER_DIR=/path/to/AsahiLocker)"
-# The RAM rescue needs the fixes from AsahiLocker's fix/ram-rescue-environment
-# branch; without them luks-deploy.sh dies with exit 32, then on the dictionary.
+# The RAM rescue needs the patch in vendor/patches; without it luks-deploy.sh
+# dies with exit 32, then on the cracklib dictionary.
 grep -q -- '--force-password' "$SRC/bin/luks-deploy.sh" \
     && grep -q 'head -1 || true)' "$SRC/bin/luks-deploy.sh" \
-    || die "$SRC lacks the RAM-rescue fixes: git -C $SRC checkout fix/ram-rescue-environment"
+    || die "$SRC lacks the RAM-rescue fixes: apply vendor/patches/*.patch, or unset ASAHILOCKER_DIR"
 [ -f "/boot/vmlinuz-$KVER" ] || die "Missing /boot/vmlinuz-$KVER"
 
 # Every tool luks-deploy.sh runs outside its chroot. dracut prints an error
