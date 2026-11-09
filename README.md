@@ -9,8 +9,11 @@ GRUB entry for it. Booting that entry stops at `rd.break=pre-mount`: the
 kernel and tools are in memory and the root partition is never mounted, which
 is what `cryptsetup reencrypt --encrypt` needs.
 
-Tested on a MacBook Air M1 (j313), Fedora Asahi, kernel
-7.2.12-402.asahi.fc45.aarch64+16k, cryptsetup 2.8.8, on 2026-11-08.
+Tested on 2026-11-08 on Fedora Asahi, kernel
+7.2.12-402.asahi.fc45.aarch64+16k, cryptsetup 2.8.8:
+
+- MacBook Air M1 (j313): encrypted with 0.1.0, an earlier draft.
+- MacBook Pro 13" M1 (2020): encrypted with 0.2.0, a full unattended run.
 
 ## Files
 
@@ -34,14 +37,14 @@ Inside the rescue, `/start.sh` finds the partitions by UUID, not by kernel
 name. The image is tied to the machine it was built on, so don't copy it to
 another Mac.
 
-AsahiLocker has to sit next to this repo (`../AsahiLocker`), or set
-`ASAHILOCKER_DIR=/path/to/AsahiLocker`, and it needs the fixes on its
-`fix/ram-rescue-environment` branch. The script checks for those fixes and
-stops if they're missing.
+AsahiLocker is a separate checkout. By default the script looks for it at
+`../AsahiLocker`, next to this repo. Anywhere else, set `ASAHILOCKER_DIR`.
+The checkout needs the RAM-rescue fixes on its `fix/ram-rescue-environment`
+branch. The script checks for those fixes and stops if they're missing.
 
 ```
 some-dir/
-├── AsahiLocker/        (git checkout fix/ram-rescue-environment)
+├── AsahiLocker/        (checkout with fix/ram-rescue-environment)
 └── asahi-ram-rescue/
 ```
 
@@ -52,6 +55,12 @@ sudo ./setup-ram-rescue.sh
 sudo grub2-editenv - unset menu_auto_hide
 sudo grub2-reboot "Fedora Asahi RAM Rescue (In-Place Encryption)"
 sudo reboot
+```
+
+If AsahiLocker isn't next to this repo, pass its location through `sudo`:
+
+```bash
+sudo env ASAHILOCKER_DIR=/path/to/AsahiLocker ./setup-ram-rescue.sh
 ```
 
 Fedora hides the GRUB menu by default. `grub2-reboot` boots the rescue

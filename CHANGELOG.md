@@ -5,6 +5,12 @@ Versions: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Moved into its own repository. The README now explains how to point
+  `ASAHILOCKER_DIR` at AsahiLocker when it isn't a sibling directory.
+- README lists both tested Macs: the MacBook Air M1 (0.1.0) and the MacBook
+  Pro 13" M1 (0.2.0).
+
 ## [0.2.0] - 2026-11-08
 
 Tested: a MacBook Pro 13" M1 (2020) was encrypted in place by a full
