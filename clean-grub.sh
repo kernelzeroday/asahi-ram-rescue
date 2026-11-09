@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-echo "=== Cleaning Up Stale USB Entries from GRUB ==="
+echo "=== Removing the RAM rescue entry from GRUB ==="
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "ERROR: Must run as root (use sudo)." >&2
@@ -18,9 +18,8 @@ exec tail -n +3 $0
 EOF
 chmod +x /etc/grub.d/40_custom
 
-# Regenerate GRUB config (with USB disconnected, os-prober drops the USB entry)
 echo "Regenerating /boot/grub2/grub.cfg..."
 grub2-mkconfig -o /boot/grub2/grub.cfg
 
 sync
-echo "=== Done! All USB entries have been cleaned from GRUB ==="
+echo "=== Done. /etc/grub.d/40_custom is back to the Fedora default ==="
