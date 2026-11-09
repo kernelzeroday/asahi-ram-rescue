@@ -21,17 +21,29 @@ Tested on a MacBook Air M1 (j313), Fedora Asahi, kernel
 
 ## Before you start
 
-`setup-ram-rescue.sh` has values for **one specific machine** written into the
-top of the file. Check every one of them against `lsblk -f` first:
+Run it **on the Mac you're encrypting**, booted normally. It reads the root
+partition, `/boot`, the btrfs subvolume and the disk from whatever is mounted
+right now, and prints them before building. Nothing machine-specific is
+hardcoded. Check the printed `root` line against `lsblk -f`: that is the
+partition that will be encrypted.
 
-- `BOOT_UUID`: the ext4 `/boot` partition
-- `ROOT_UUID`: the **unencrypted** btrfs root partition you're encrypting
-- `SRC`: path to an AsahiLocker checkout. It needs the fixes on the
-  `fix/ram-rescue-environment` branch (see below).
+It refuses to run if `/` is already on device-mapper (already encrypted), if
+`/` isn't btrfs, or if `/boot` isn't a separate partition.
 
-The GRUB entry points `root=` at a plain btrfs UUID. Once that partition is
-encrypted, the UUID only appears after unlocking, so **this entry won't work
-for a second run** unless you add `rd.luks.uuid=`.
+Inside the rescue, `/start.sh` finds the partitions by UUID, not by kernel
+name. The image is tied to the machine it was built on, so don't copy it to
+another Mac.
+
+AsahiLocker has to sit next to this repo (`../AsahiLocker`), or set
+`ASAHILOCKER_DIR=/path/to/AsahiLocker`, and it needs the fixes on its
+`fix/ram-rescue-environment` branch. The script checks for those fixes and
+stops if they're missing.
+
+```
+some-dir/
+├── AsahiLocker/        (git checkout fix/ram-rescue-environment)
+└── asahi-ram-rescue/
+```
 
 ## Use
 
